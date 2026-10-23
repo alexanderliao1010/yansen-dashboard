@@ -40,8 +40,12 @@ const GH={
   ready(){const c=this.cfg();return !!(c.owner&&c.repo&&c.token)},
   async api(path,opt={}){
     const c=this.cfg();
-    const r=await fetch(`https://api.github.com/repos/${c.owner}/${c.repo}${path}`,{...opt,headers:{Authorization:'Bearer '+c.token,Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28',...(opt.body?{'Content-Type':'application/json'}:{}),...(opt.headers||{})}});
-    if(!r.ok){let m='';try{m=(await r.json()).message}catch(e){}throw new Error(`GitHub ${r.status}${m?'：'+m:''}`)}
+    let r;
+    try{r=await fetch(`https://api.github.com/repos/${c.owner}/${c.repo}${path}`,{...opt,headers:{Authorization:'Bearer '+c.token,Accept:'application/vnd.github+json',...(opt.body?{'Content-Type':'application/json'}:{}),...(opt.headers||{})}})}
+    catch(e){throw new Error(ON_PAGES?'連不到 GitHub。請確認網路正常，並關掉會封鎖 api.github.com 的廣告阻擋外掛後再試':'這是預覽頁，不能連線 GitHub，請到 GitHub 網站版操作')}
+    if(!r.ok){let m='';try{m=(await r.json()).message}catch(e){}
+      const why={401:'金鑰無效或已過期，請重新產生一組',403:'金鑰權限不足，Contents 要設為 Read and write',404:'找不到儲存庫：請確認帳號、儲存庫名稱，以及金鑰有勾選這個儲存庫',409:'儲存庫是空的或正在更新，請稍後再試',422:'GitHub 拒絕了這次寫入，請重新整理頁面後再試'}[r.status];
+      throw new Error(why?`${why}（GitHub ${r.status}）`:`GitHub ${r.status}${m?'：'+m:''}`)}
     return r.status===204?null:r.json();
   },
   async raw(path){
@@ -372,7 +376,8 @@ $('#modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal()})
 
 function settingsModal(next,why){
   const c=GH.cfg();
-  openModal(`<h3>GitHub 連線</h3>${why?`<p class="lead" style="color:var(--amber);font-weight:500">${esc(why)}</p>`:''}<p class="lead">新增、編輯、刪除會直接寫回 GitHub 儲存庫。金鑰只存在這台裝置的瀏覽器裡，換裝置或換瀏覽器要重新輸入一次。</p>
+  const pagesUrl=`https://${c.owner||'alexanderliao1010'}.github.io/${c.repo||'yansen-dashboard'}/`;
+  openModal(`<h3>GitHub 連線</h3>${!ON_PAGES?`<p class="lead" style="color:var(--red);font-weight:500">這是預覽頁，不能連線 GitHub。請到網站版操作：<a href="${pagesUrl}" target="_blank" rel="noopener">${pagesUrl}</a></p>`:''}${why?`<p class="lead" style="color:var(--amber);font-weight:500">${esc(why)}</p>`:''}<p class="lead">新增、編輯、刪除會直接寫回 GitHub 儲存庫。金鑰只存在這台裝置的瀏覽器裡，換裝置或換瀏覽器要重新輸入一次。</p>
   <form id="ghf"><div class="fgrid">
     <label>帳號<input name="owner" value="${esc(c.owner||'')}" required autocomplete="off"></label>
     <label>儲存庫<input name="repo" value="${esc(c.repo||'yansen-dashboard')}" required autocomplete="off"></label>
