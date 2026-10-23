@@ -44,6 +44,12 @@ const GH={
     if(!r.ok){let m='';try{m=(await r.json()).message}catch(e){}throw new Error(`GitHub ${r.status}${m?'：'+m:''}`)}
     return r.status===204?null:r.json();
   },
+  async raw(path){
+    const c=this.cfg();
+    const r=await fetch(`https://api.github.com/repos/${c.owner}/${c.repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${c.branch}`,{headers:{Authorization:'Bearer '+c.token,Accept:'application/vnd.github.raw'}});
+    if(!r.ok)throw new Error('GitHub '+r.status);
+    return r.blob();
+  },
   async latestProjects(){
     const c=this.cfg();
     const j=await this.api(`/contents/data/projects.json?ref=${c.branch}`);
@@ -94,12 +100,19 @@ async function persist(mutate,files,message,onStep){
   }
 }
 const LOCALFILES={};let SAVED_AT=0;
+const ON_PAGES=/\.github\.io$/i.test(location.hostname);
+/* 在 GitHub 網站上，沒連線就不讓改，避免改了卻沒存到 */
+function needConn(next){
+  if(GH.ready()||!ON_PAGES)return next();
+  settingsModal(next,'還沒連線 GitHub，新增、修改或刪除的內容不會存檔。請先貼上存取金鑰。');
+}
 const fileUrl=p=>LOCALFILES[p]||p;
 
 /* ---------------- home ---------------- */
 function banner(){
-  if(GH.ready()) return SAVED_AT&&Date.now()-SAVED_AT<180000?`<div class="banner ok"><span>已存到 GitHub。網站約 1 分鐘後更新，其他裝置重新整理即可看到。</span></div>`:'';
-  return `<div class="banner"><span>預覽模式：新增、編輯、刪除只會改這個頁面，重新整理後就會還原。連線 GitHub 後才會真正存檔。</span><button data-act="settings">設定 GitHub 連線</button></div>`;
+  if(GH.ready()) return SAVED_AT&&Date.now()-SAVED_AT<180000?`<div class="banner ok"><span>已存到 GitHub。這台裝置馬上看得到；其他裝置約 1～2 分鐘後重新整理就會更新。</span></div>`:'';
+  if(ON_PAGES)return `<div class="banner"><span>這台裝置還沒連線 GitHub：可以瀏覽，但要新增、修改或刪除工程，請先連線。</span><button data-act="settings">連線 GitHub</button></div>`;
+  return `<div class="banner"><span>預覽模式：新增、編輯、刪除只會改這個頁面，重新整理後就會還原。放上 GitHub 並連線後才會真正存檔。</span><button data-act="settings">設定 GitHub 連線</button></div>`;
 }
 function renderHome(){
   const t=today();
@@ -159,6 +172,7 @@ function renderHome(){
   <p class="note">點工程名稱進入工程契約、圖說與預算。工作天計算已扣除週六、週日與國定假日；116 年假日為依放假規則推估，機關書面同意於假日施工或展延工期時，請以監造核定為準。</p>`;
   $$('input[data-start]').forEach(inp=>inp.addEventListener('change',async e=>{
     const id=e.target.dataset.start,v=e.target.value;if(!v)return;
+    if(ON_PAGES&&!GH.ready()){e.target.value=PROJECTS.find(p=>p.id===id)?.start||'';needConn(()=>route());return}
     try{await persist(arr=>arr.map(p=>p.id===id?{...p,start:v}:p),[],`更新開工日：${PROJECTS.find(p=>p.id===id)?.short||id} ${v}`)}catch(err){alert('開工日沒有存成功：'+err.message)}
     route();
   }));
@@ -166,14 +180,29 @@ function renderHome(){
 }
 
 /* ---------------- detail ---------------- */
+/* 先讀網站上的檔案；剛上傳、網站還沒更新時，改從 GitHub 直接讀 */
+async function getFile(src){
+  try{const r=await fetch(nocache(fileUrl(src)));if(r.ok)return r.blob()}catch(e){}
+  if(GH.ready())return GH.raw(src);
+  throw new Error('找不到檔案');
+}
+async function fixPdfFrames(){
+  for(const el of $$('[data-pdf]')){
+    const src=el.dataset.pdf;if(src.startsWith('blob:'))continue;
+    let ok=false;try{ok=(await fetch(nocache(src),{method:'HEAD'})).ok}catch(e){}
+    if(ok||!GH.ready())continue;
+    try{const b=await GH.raw(src);const u=URL.createObjectURL(new Blob([b],{type:'application/pdf'}));LOCALFILES[src]=u;
+      el.querySelector('iframe').src=u;el.querySelector('a').href=u}catch(e){}
+  }
+}
 async function loadText(p){
   const src=p.docs?.contract?.text; if(!src){TXT[p.id]='';return}
-  try{const r=await fetch(nocache(fileUrl(src)));TXT[p.id]=r.ok?await r.text():''}catch(e){TXT[p.id]=''}
+  TXT[p.id]=await getFile(src).then(b=>b.text()).catch(()=>'');
   route();
 }
 async function loadBudget(p){
   const src=p.docs?.budget?.json; if(!src){BUD[p.id]=null;return}
-  try{const r=await fetch(nocache(fileUrl(src)));BUD[p.id]=r.ok?await r.json():null}catch(e){BUD[p.id]=null}
+  BUD[p.id]=await getFile(src).then(b=>b.text()).then(JSON.parse).catch(()=>null);
   route();
 }
 function contractHTML(pid){
@@ -190,7 +219,7 @@ function contractHTML(pid){
   return {html,toc};
 }
 const pagesHTML=(list,label,group)=>list.map((pg,i)=>`<img loading="lazy" src="${esc(fileUrl(pg.src))}" alt="${label} 第 ${i+1} 頁" data-g="${group}" data-i="${i}">`).join('');
-const pdfHTML=(src,label)=>`<div class="pdfbox"><p class="hint">${label}（PDF）。手機若只顯示第一頁，請點「開新視窗」。 <a href="${esc(fileUrl(src))}" target="_blank" rel="noopener">開新視窗</a></p><iframe src="${esc(fileUrl(src))}" title="${label}"></iframe></div>`;
+const pdfHTML=(src,label)=>`<div class="pdfbox" data-pdf="${esc(fileUrl(src))}"><p class="hint">${label}（PDF）。手機若只顯示第一頁，請點「開新視窗」。 <a href="${esc(fileUrl(src))}" target="_blank" rel="noopener">開新視窗</a></p><iframe src="${esc(fileUrl(src))}" title="${label}"></iframe></div>`;
 
 function budgetHTML(p){
   const B=BUD[p.id], src=p.docs?.budget;
@@ -297,6 +326,7 @@ function renderDetail(pid,tab,sub){
   $$('[data-g]').forEach(el=>el.addEventListener('click',()=>openLB(D[el.dataset.g].pages.map(x=>({...x,src:fileUrl(x.src)})),+el.dataset.i,cap[el.dataset.g])));
   if(tab==='contract'&&sub==='text'&&$('#ctext'))wireSearch();
   if(tab==='budget')wireBudget();
+  fixPdfFrames();
 }
 
 function wireSearch(){
@@ -340,9 +370,9 @@ function openModal(html,cls=''){$('#modal').innerHTML=`<div class="mbox ${cls}" 
 function closeModal(){$('#modal').classList.remove('open');$('#modal').innerHTML='';document.body.style.overflow=''}
 $('#modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal()});
 
-function settingsModal(){
+function settingsModal(next,why){
   const c=GH.cfg();
-  openModal(`<h3>GitHub 連線</h3><p class="lead">新增、編輯、刪除會直接寫回 GitHub 儲存庫。金鑰只存在這台裝置的瀏覽器裡，換裝置要重新輸入一次。</p>
+  openModal(`<h3>GitHub 連線</h3>${why?`<p class="lead" style="color:var(--amber);font-weight:500">${esc(why)}</p>`:''}<p class="lead">新增、編輯、刪除會直接寫回 GitHub 儲存庫。金鑰只存在這台裝置的瀏覽器裡，換裝置或換瀏覽器要重新輸入一次。</p>
   <form id="ghf"><div class="fgrid">
     <label>帳號<input name="owner" value="${esc(c.owner||'')}" required autocomplete="off"></label>
     <label>儲存庫<input name="repo" value="${esc(c.repo||'yansen-dashboard')}" required autocomplete="off"></label>
@@ -356,7 +386,9 @@ function settingsModal(){
     const n={owner:fd.get('owner').trim(),repo:fd.get('repo').trim(),token:fd.get('token').trim(),branch:'main'};
     const old=store('ys-gh');store('ys-gh',JSON.stringify(n));
     $('#ghmsg').className='msg';$('#ghmsg').textContent='測試中…';
-    try{const r=await GH.api('');if(!r.permissions?.push)throw new Error('這組金鑰沒有寫入權限');n.branch=r.default_branch||'main';store('ys-gh',JSON.stringify(n));closeModal();route()}
+    try{const r=await GH.api('');if(!r.permissions?.push)throw new Error('這組金鑰沒有寫入權限');n.branch=r.default_branch||'main';store('ys-gh',JSON.stringify(n));closeModal();
+      try{PROJECTS=await GH.latestProjects()}catch(e){}
+      route();if(typeof next==='function')next()}
     catch(err){old===null?store('ys-gh',null):store('ys-gh',old);$('#ghmsg').className='msg err';$('#ghmsg').textContent='連線失敗：'+err.message}
   };
 }
@@ -364,60 +396,134 @@ function settingsModal(){
 function formModal(p){
   const isNew=!p; p=p||{dayType:'cal'};
   const v=k=>esc(p[k]??'');
-  openModal(`<h3>${isNew?'新增工程':'編輯工程'}</h3><p class="lead">${isNew?'先填基本資料，文件可以之後再補。':'只會更新有改動的欄位；檔案欄位留空就保留原本的檔案。'}</p>
+  const blank=k=>(p[k]==='待確認'||p[k]==='待補')?'':v(k);
+  openModal(`<h3>${isNew?'新增工程':'編輯工程'}</h3><p class="lead">${isNew?'先選決標公告和工程契約，系統會自動讀出欄位；讀不到的再手動補。':'選新的文件會自動比對欄位；檔案欄位留空就保留原本的檔案。'}</p>
   <form id="pf"><div class="fgrid">
-    <label class="full">工程名稱 <b>*</b><input name="name" value="${v('name')}" required></label>
+    <div class="fsec" style="margin-top:0;padding-top:0;border-top:none">文件${isNew?'':'（留空保留原檔）'}</div>
+    <label>決標公告<input name="f_award" type="file" accept=".pdf"><small>自動帶入：機關、案號、金額、決標日、窗口、技術服務廠商</small></label>
+    <label>工程契約<input name="f_contract" type="file" accept=".pdf,.txt,.md"><small>自動帶入：工期、天數計算、開工規定、契約份數</small></label>
+    <label>圖說<input name="f_draw" type="file" accept=".pdf"></label>
+    <label>標單（預算）<input name="f_budget" type="file" accept=".xlsx,.xls"><small>自動產生預算明細</small></label>
+    <div class="full autobox" id="autobox" hidden></div>
+    <div class="fsec">基本資料</div>
+    <label class="full"><span>工程名稱 <b>*</b></span><input name="name" value="${v('name')}" required></label>
     <label>簡稱<input name="short" value="${v('short')}" placeholder="例如：大溪桌球場"></label>
-    <label>機關 <b>*</b><input name="agency" value="${v('agency')}" required></label>
+    <label><span>機關 <b>*</b></span><input name="agency" value="${v('agency')}" required></label>
     <label>案號<input name="caseNo" value="${v('caseNo')}"></label>
     <label>決標日<input name="awardDate" type="date" value="${v('awardDate')}"></label>
-    <label>開工日<input name="start" type="date" value="${v('start')}"></label>
-    <label>施工天數 <b>*</b><input name="days" type="number" min="1" value="${v('days')}" required></label>
+    <label>開工日<input name="start" type="date" value="${v('start')}"><small>依機關開工通知填寫</small></label>
+    <label><span>施工天數 <b>*</b></span><input name="days" type="number" min="1" value="${v('days')}" required></label>
     <label>天數計算<select name="dayType"><option value="cal" ${p.dayType!=='work'?'selected':''}>日曆天</option><option value="work" ${p.dayType==='work'?'selected':''}>工作天</option></select></label>
     <label class="full">開工規定<input name="startRule" value="${v('startRule')}" placeholder="例如：機關通知日起 10 日內開工"></label>
     <div class="fsec">金額</div>
     <label>決標金額（元）<input name="amount" type="number" min="0" value="${v('amount')}"></label>
     <label>預算金額（元）<input name="budget" type="number" min="0" value="${v('budget')}"></label>
-    <label>底價（元）<input name="floor" type="number" min="0" value="${v('floor')}"><small>填了決標金額和底價會自動算標比</small></label>
+    <label>底價（元）<input name="floor" type="number" min="0" value="${v('floor')}"><small>有決標金額和底價會自動算標比</small></label>
+    <label>是否受補助<input name="subsidy" value="${blank('subsidy')}"></label>
     <div class="fsec">聯絡</div>
-    <label>監造單位<input name="supervisor" value="${p.supervisor==='待確認'?'':v('supervisor')}"></label>
-    <label>業主窗口<input name="contact" value="${p.contact==='待補'?'':v('contact')}"></label>
+    <label>監造單位<input name="supervisor" value="${blank('supervisor')}"></label>
+    <label>業主窗口<input name="contact" value="${blank('contact')}"></label>
     <label>窗口電話<input name="phone" value="${v('phone')}"></label>
     <label>窗口 Email<input name="email" type="email" value="${v('email')}"></label>
-    <div class="fsec">文件${isNew?'':'（留空保留原檔）'}</div>
-    <label>工程契約<input name="f_contract" type="file" accept=".pdf,.txt,.md"><small>PDF，或可搜尋的文字檔</small></label>
-    <label>圖說<input name="f_draw" type="file" accept=".pdf"></label>
-    <label>決標公告<input name="f_award" type="file" accept=".pdf"></label>
-    <label>標單（預算）<input name="f_budget" type="file" accept=".xlsx,.xls"><small>會自動讀取「詳細表」產生預算明細</small></label>
+    <div class="fsec">標案資料</div>
+    <label>決標公告日<input name="announce" type="date" value="${v('announce')}"></label>
+    <label>開標日<input name="bidOpen" type="date" value="${v('bidOpen')}"></label>
+    <label>招標／決標方式<input name="method" value="${blank('method')}"></label>
+    <label>預估履約期間<input name="estPeriod" value="${blank('estPeriod')}"></label>
+    <label>契約份數<input name="copies" value="${v('copies')}"></label>
   </div><div class="mfoot"><span class="msg" id="pmsg"></span><button type="button" class="btn" data-close>取消</button><button class="btn primary" id="psave">${isNew?'新增':'儲存'}</button></div></form>`);
   $('[data-close]').onclick=closeModal;
-  $('#pf').onsubmit=async e=>{
-    e.preventDefault();const fd=new FormData(e.target);const msg=$('#pmsg');
+  const form=$('#pf'), box=$('#autobox');
+  const extra={}; let contractText=null, budgetItems=null;
+  const report={};   // 來源 → {n, ocr, conflicts:[], note}
+  const same=(a,b)=>String(a??'').replace(/[\s,，]/g,'')===String(b??'').replace(/[\s,，]/g,'');
+  const LABEL={name:'工程名稱',agency:'機關',caseNo:'案號',awardDate:'決標日',days:'施工天數',dayType:'天數計算',startRule:'開工規定',amount:'決標金額',budget:'預算金額',floor:'底價',subsidy:'是否受補助',supervisor:'監造單位',contact:'業主窗口',phone:'窗口電話',email:'窗口 Email',announce:'決標公告日',bidOpen:'開標日',method:'招標／決標方式',estPeriod:'預估履約期間',copies:'契約份數'};
+  function apply(fields,srcName,rank){
+    const r=report[srcName]={...(report[srcName]||{}),filled:[],conflicts:[]};
+    for(const [k,val] of Object.entries(fields)){
+      if(val===undefined||val===null||val==='')continue;
+      const el=form.elements[k];
+      if(!el){extra[k]=val;continue}
+      const cur=el.value, autoRank=+(el.dataset.rank||0);
+      if(!cur||(el.classList.contains('auto')&&autoRank<rank)){
+        el.value=val;el.classList.add('auto');el.dataset.rank=rank;el.dataset.src=srcName;r.filled.push(k);
+      }else if(!same(cur,val)&&!(el.classList.contains('auto')&&el.dataset.src===srcName)){
+        r.conflicts.push({k,val});
+      }
+    }
+    if(fields.supNote)extra.supNote=fields.supNote;
+    if(fields.amount)extra._amt=fields.amount;
+    renderBox();
+  }
+  function renderBox(){
+    const parts=Object.entries(report).map(([name,r])=>{
+      if(r.busy)return `<div class="ab-row"><b>${esc(name)}</b>：${esc(r.busy)}</div>`;
+      if(r.error)return `<div class="ab-row err"><b>${esc(name)}</b>：${esc(r.error)}</div>`;
+      const conf=(r.conflicts||[]).map(c=>`<li>${LABEL[c.k]||c.k}：表單是「${esc(form.elements[c.k].value)}」，文件是「${esc(c.k==='dayType'?(c.val==='work'?'工作天':'日曆天'):c.val)}」 <button type="button" class="linkbtn" data-use="${c.k}" data-val="${esc(c.val)}">改用文件的值</button></li>`).join('');
+      if(r.info)return `<div class="ab-row"><b>${esc(name)}</b>：${esc(r.note||'')}</div>`;
+      return `<div class="ab-row"><b>${esc(name)}</b>：${r.filled?.length?`帶入 ${r.filled.length} 個欄位（${r.filled.map(k=>LABEL[k]||k).join('、')}）`:'沒有新的欄位可帶入'}${r.ocr?'。這是掃描檔，用文字辨識讀出，<b>請逐一核對黃色欄位</b>':'，請核對黃色欄位'}${r.note?'。'+esc(r.note):''}${conf?`<ul>${conf}</ul>`:''}</div>`;
+    });
+    box.hidden=!parts.length;box.innerHTML=parts.join('');
+    box.querySelectorAll('[data-use]').forEach(b=>b.onclick=()=>{const el=form.elements[b.dataset.use];el.value=b.dataset.val;el.classList.add('auto');
+      Object.values(report).forEach(r=>r.conflicts=(r.conflicts||[]).filter(c=>c.k!==b.dataset.use));renderBox()});
+  }
+  form.addEventListener('input',e=>{if(e.target.classList.contains('auto')&&e.isTrusted){e.target.classList.remove('auto');e.target.dataset.rank=9}});
+  const busy=(name,t)=>{report[name]={...(report[name]||{}),busy:t,error:null};renderBox()};
+  form.elements.f_award.addEventListener('change',async e=>{
+    const f=e.target.files[0];if(!f)return;const N='決標公告';
+    try{busy(N,'讀取中…');const r=await Extract.award(f,t=>busy(N,t));report[N]={ocr:r.ocr};
+      if(r.fields.winner&&!/硯森/.test(r.fields.winner))report[N].note=`得標廠商是「${r.fields.winner}」，請確認檔案是否正確`;
+      if(!Object.keys(r.fields).length)report[N].note='沒有讀到決標公告的欄位，請確認是政府電子採購網的決標公告';
+      apply(r.fields,N,2);
+    }catch(err){report[N]={error:'讀取失敗：'+err.message};renderBox()}
+  });
+  form.elements.f_contract.addEventListener('change',async e=>{
+    const f=e.target.files[0];if(!f)return;const N='工程契約';
+    try{busy(N,'讀取中…');const r=await Extract.contract(f,t=>busy(N,t));report[N]={ocr:false,note:r.note};contractText=r.text||null;
+      if(contractText)report[N].note=(report[N].note?report[N].note+'。':'')+'契約全文會一併存成可搜尋的文字';
+      apply(r.fields,N,1);
+    }catch(err){report[N]={error:'讀取失敗：'+err.message};renderBox()}
+  });
+  form.elements.f_budget.addEventListener('change',async e=>{
+    const f=e.target.files[0];if(!f)return;const N='標單';
+    try{busy(N,'讀取中…');budgetItems=await parseXlsx(f);
+      const tot=budgetItems.filter(x=>x.lvl===-1&&/總價|合計/.test(x.name)).map(x=>x.amt).pop();
+      report[N]={info:true,note:`讀到 ${budgetItems.filter(x=>x.lvl===2).length} 個工項${tot?`，合計 ${fmt(tot)} 元`:''}`};renderBox();
+    }catch(err){budgetItems=null;report[N]={error:'讀取失敗：'+err.message};renderBox()}
+  });
+
+  form.onsubmit=async e=>{
+    e.preventDefault();const fd=new FormData(form);const msg=$('#pmsg');
+    if(Object.values(report).some(r=>r.busy)){msg.className='msg err';msg.textContent='文件還在讀取中，請稍候';return}
     const id=p.id||('p'+Date.now().toString(36));
     const num=k=>{const x=String(fd.get(k)||'').trim();return x?Number(x):null};
-    const upd={name:fd.get('name').trim(),short:fd.get('short').trim(),agency:fd.get('agency').trim(),caseNo:fd.get('caseNo').trim(),
-      awardDate:fd.get('awardDate'),start:fd.get('start'),days:num('days'),dayType:fd.get('dayType'),startRule:fd.get('startRule').trim(),
-      amount:num('amount'),budget:num('budget'),floor:num('floor'),supervisor:fd.get('supervisor').trim(),contact:fd.get('contact').trim(),
-      phone:fd.get('phone').trim(),email:fd.get('email').trim()};
-    if(upd.amount&&upd.floor)upd.ratio=(upd.amount/upd.floor*100).toFixed(2)+'%';else if(!upd.floor)upd.ratio='';
-    if(upd.phone)upd.tel=upd.phone.split('#')[0].replace(/[^\d]/g,'');
+    const str=k=>String(fd.get(k)||'').trim();
+    const upd={name:str('name'),short:str('short'),agency:str('agency'),caseNo:str('caseNo'),
+      awardDate:str('awardDate'),start:str('start'),days:num('days'),dayType:str('dayType'),startRule:str('startRule'),
+      amount:num('amount'),budget:num('budget'),floor:num('floor'),subsidy:str('subsidy'),supervisor:str('supervisor'),contact:str('contact'),
+      phone:str('phone'),email:str('email'),announce:str('announce'),bidOpen:str('bidOpen'),method:str('method'),estPeriod:str('estPeriod'),copies:str('copies')};
+    upd.ratio=upd.amount&&upd.floor?(upd.amount/upd.floor*100).toFixed(2)+'%':'';
+    upd.tel=upd.phone?upd.phone.split('#')[0].replace(/[^\d]/g,''):'';
+    if(extra.amountCN&&upd.amount===extra._amt)upd.amountCN=extra.amountCN;else if(upd.amount!==p.amount)upd.amountCN='';
+    if(extra.supNote&&form.elements.supervisor.classList.contains('auto'))upd.supNote=extra.supNote;
     $('#psave').disabled=true;msg.className='msg';msg.textContent='處理中…';
     try{
       const files=[], docs={...(p.docs||{})};
       const put=async(file,path)=>{files.push({path,b64:await b64file(file),blobUrl:URL.createObjectURL(file)});return path};
+      const putText=(t,path,type='text/plain')=>{files.push({path,b64:b64text(t),blobUrl:URL.createObjectURL(new Blob([t],{type}))});return path};
       const fc=fd.get('f_contract'),fdr=fd.get('f_draw'),fa=fd.get('f_award'),fb=fd.get('f_budget');
       const ext=f=>(f.name.split('.').pop()||'').toLowerCase();
-      if(fc&&fc.size){ if(ext(fc)==='pdf')docs.contract={pdf:await put(fc,`data/${id}/contract.pdf`)}; else{const t=await fc.text();files.push({path:`data/${id}/contract.txt`,b64:b64text(t),blobUrl:URL.createObjectURL(new Blob([t],{type:'text/plain'}))});docs.contract={text:`data/${id}/contract.txt`};delete TXT[id]} }
+      if(fc&&fc.size){
+        if(ext(fc)==='pdf'){docs.contract={pdf:await put(fc,`data/${id}/contract.pdf`)};if(contractText)docs.contract.text=putText(contractText,`data/${id}/contract.txt`)}
+        else docs.contract={text:putText(await fc.text(),`data/${id}/contract.txt`)};
+        delete TXT[id];
+      }
       if(fdr&&fdr.size)docs.draw={pdf:await put(fdr,`data/${id}/drawings.pdf`)};
       if(fa&&fa.size)docs.award={pdf:await put(fa,`data/${id}/award.pdf`)};
       if(fb&&fb.size){
-        msg.textContent='讀取標單…';
-        const items=await parseXlsx(fb);
+        const items=budgetItems||await parseXlsx(fb);
         const bj={title:'標單詳細表',source:fb.name,total:items.filter(x=>x.lvl===-1&&/總價|合計/.test(x.name)).map(x=>x.amt).pop()||null,items};
-        const s=JSON.stringify(bj);
-        files.push({path:`data/${id}/budget.json`,b64:b64text(s),blobUrl:URL.createObjectURL(new Blob([s],{type:'application/json'}))});
-        const xp=await put(fb,`data/${id}/budget.${ext(fb)}`);
-        docs.budget={json:`data/${id}/budget.json`,file:xp};delete BUD[id];
+        docs.budget={json:putText(JSON.stringify(bj),`data/${id}/budget.json`,'application/json'),file:await put(fb,`data/${id}/budget.${ext(fb)}`)};delete BUD[id];
       }
       upd.docs=docs;
       await persist(arr=>isNew?[...arr,{id,...upd}]:arr.map(x=>x.id===id?{...x,...upd}:x),files,`${isNew?'新增':'更新'}工程：${upd.short||upd.name}`,s=>msg.textContent=s);
@@ -475,7 +581,7 @@ async function parseXlsx(file){
 document.addEventListener('click',e=>{
   const b=e.target.closest('[data-act]');if(!b)return;
   const a=b.dataset.act,p=PROJECTS.find(x=>x.id===b.dataset.id);
-  if(a==='add')formModal();else if(a==='edit'&&p)formModal(p);else if(a==='del'&&p)deleteModal(p);else if(a==='settings')settingsModal();
+  if(a==='add')needConn(()=>formModal());else if(a==='edit'&&p)needConn(()=>formModal(p));else if(a==='del'&&p)needConn(()=>deleteModal(p));else if(a==='settings')settingsModal();
 });
 
 function route(){
@@ -488,6 +594,8 @@ window.addEventListener('hashchange',()=>{closeLB();route();window.scrollTo(0,0)
 (async function init(){
   try{
     const [pj,hj]=await Promise.all([fetch(nocache('data/projects.json'),{cache:'no-store'}).then(r=>r.json()),fetch(nocache('data/holidays.json')).then(r=>r.json()).catch(()=>({dates:[]}))]);
-    PROJECTS=pj;HOLIDAYS=new Set(hj.dates||[]);READY=true;route();
+    PROJECTS=pj;HOLIDAYS=new Set(hj.dates||[]);
+    if(GH.ready()){try{PROJECTS=await GH.latestProjects()}catch(e){console.warn('GitHub 讀取失敗，改用網站上的資料',e)}}
+    READY=true;route();
   }catch(e){$('#app').innerHTML='<p class="empty">工程資料讀取失敗，請重新整理頁面。</p>'}
 })();
