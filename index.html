@@ -81,10 +81,16 @@ button,input{font:inherit;color:inherit}
 .tick::after{content:"";display:block;width:1px;height:10px;background:var(--ink-3);margin:1px auto 0}
 .today{position:absolute;top:6px;height:18px;width:0;border-left:2px solid var(--red)}
 .today span{position:absolute;top:18px;left:4px;font-size:11px;color:var(--red);white-space:nowrap;font-weight:700}
-.stripfoot{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:13px;color:var(--ink-2);margin-top:6px}
-.stripfoot .go{display:flex;gap:14px}
-.stripfoot .go a{color:var(--forest);font-weight:700;text-decoration:none}
-.stripfoot .go a:hover{text-decoration:underline}
+.stripfoot{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;font-size:13px;color:var(--ink-2);margin-top:6px}
+.stripfoot .go{display:flex;gap:8px;flex-wrap:wrap}
+.stripfoot .go a,.stripfoot .go button{display:inline-flex;align-items:center;min-height:34px;padding:5px 14px;border:1px solid var(--forest);border-radius:4px;background:var(--sheet);color:var(--forest);font-size:14px;font-weight:700;text-decoration:none;transition:background .15s,color .15s}
+.stripfoot .go a:hover,.stripfoot .go button:hover{background:var(--forest);color:var(--sheet)}
+.stripfoot .go button{font-family:inherit;cursor:pointer}
+.stripfoot .go .prog.unset,.btn.prog.unset{border-style:dashed;color:var(--amber);border-color:var(--amber)}
+.stripfoot .go .prog.unset:hover,.btn.prog.unset:hover{background:var(--amber);color:var(--sheet)}
+a.btn{display:inline-flex;align-items:center;text-decoration:none}
+.stripfoot .go a:focus-visible,.stripfoot .go button:focus-visible{outline:2px solid var(--forest);outline-offset:2px}
+@media (max-width:560px){.stripfoot .go{width:100%}.stripfoot .go a,.stripfoot .go button{flex:1;justify-content:center}}
 .axis{position:relative;height:18px;margin:10px 16px 0;font-size:11.5px;color:var(--ink-3)}
 .axis span{position:absolute;transform:translateX(-50%)}
 .note{margin-top:18px;font-size:13px;color:var(--ink-3);max-width:80ch}
@@ -251,7 +257,7 @@ button,input{font:inherit;color:inherit}
 </div>
 <div class="modal" id="modal" role="dialog" aria-modal="true"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
-<script src="extract.js?v=20261023"></script>
-<script src="app.js?v=20261023"></script>
+<script src="extract.js?v=20261023c"></script>
+<script src="app.js?v=20261023c"></script>
 </body>
 </html>

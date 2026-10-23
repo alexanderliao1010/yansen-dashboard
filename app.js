@@ -160,7 +160,7 @@ function renderHome(){
         <div class="cell contact"><span class="k">業主窗口</span>${!p.contact||p.contact==='待補'?ND:esc(p.contact)}<small>${p.phone?`<a href="tel:${esc(p.tel||p.phone.replace(/[^\d]/g,''))}">${esc(p.phone)}</a>`:''}${p.email?`<br><a href="mailto:${esc(p.email)}">${esc(p.email)}</a>`:''}</small></div>
       </div>
       <div class="strip"><div class="track">${strip}</div>
-        <div class="stripfoot"><span>${status}</span><span class="go"><a href="#/${p.id}/contract">工程契約</a><a href="#/${p.id}/drawings">圖說</a><a href="#/${p.id}/budget">預算</a></span></div></div>
+        <div class="stripfoot"><span>${status}</span><span class="go"><a href="#/${p.id}/contract">工程契約</a><a href="#/${p.id}/drawings">圖說</a><a href="#/${p.id}/budget">預算</a>${progBtn(p)}</span></div></div>
     </section>`}).join('');
   }
   $('#app').innerHTML=`
@@ -309,7 +309,7 @@ function renderDetail(pid,tab,sub){
   }else body+=budgetHTML(p);
 
   $('#app').innerHTML=`
-    <div class="dtop"><button class="back" id="back">‹ 回工程總覽</button><div class="actions"><button class="btn" data-act="edit" data-id="${p.id}">編輯</button><button class="btn danger" data-act="del" data-id="${p.id}">刪除工程</button></div></div>
+    <div class="dtop"><button class="back" id="back">‹ 回工程總覽</button><div class="actions">${progBtn(p,'btn')}<button class="btn" data-act="edit" data-id="${p.id}">編輯</button><button class="btn danger" data-act="del" data-id="${p.id}">刪除工程</button></div></div>
     ${banner()}
     <header class="dhead"><h2>${esc(p.name)}</h2><div class="sub">${esc(p.agency)}${p.caseNo?`｜${esc(p.caseLabel||'案號')} ${esc(p.caseNo)}`:''}</div>
       <dl class="facts">
@@ -430,6 +430,7 @@ function formModal(p){
     <label>業主窗口<input name="contact" value="${blank('contact')}"></label>
     <label>窗口電話<input name="phone" value="${v('phone')}"></label>
     <label>窗口 Email<input name="email" type="email" value="${v('email')}"></label>
+    <label class="full">施工進度網址<input name="progressUrl" type="url" value="${v('progressUrl')}" placeholder="https://…"><small>總覽的「施工進度」按鈕會開這個網址</small></label>
     <div class="fsec">標案資料</div>
     <label>決標公告日<input name="announce" type="date" value="${v('announce')}"></label>
     <label>開標日<input name="bidOpen" type="date" value="${v('bidOpen')}"></label>
@@ -506,7 +507,7 @@ function formModal(p){
     const upd={name:str('name'),short:str('short'),agency:str('agency'),caseNo:str('caseNo'),
       awardDate:str('awardDate'),start:str('start'),days:num('days'),dayType:str('dayType'),startRule:str('startRule'),
       amount:num('amount'),budget:num('budget'),floor:num('floor'),subsidy:str('subsidy'),supervisor:str('supervisor'),contact:str('contact'),
-      phone:str('phone'),email:str('email'),announce:str('announce'),bidOpen:str('bidOpen'),method:str('method'),estPeriod:str('estPeriod'),copies:str('copies')};
+      phone:str('phone'),email:str('email'),announce:str('announce'),bidOpen:str('bidOpen'),method:str('method'),estPeriod:str('estPeriod'),copies:str('copies'),progressUrl:str('progressUrl')};
     upd.ratio=upd.amount&&upd.floor?(upd.amount/upd.floor*100).toFixed(2)+'%':'';
     upd.tel=upd.phone?upd.phone.split('#')[0].replace(/[^\d]/g,''):'';
     if(extra.amountCN&&upd.amount===extra._amt)upd.amountCN=extra.amountCN;else if(upd.amount!==p.amount)upd.amountCN='';
@@ -534,6 +535,30 @@ function formModal(p){
       await persist(arr=>isNew?[...arr,{id,...upd}]:arr.map(x=>x.id===id?{...x,...upd}:x),files,`${isNew?'新增':'更新'}工程：${upd.short||upd.name}`,s=>msg.textContent=s);
       closeModal();location.hash=isNew?`#/${id}/contract`:location.hash;route();
     }catch(err){msg.className='msg err';msg.textContent='沒有存成功：'+err.message;$('#psave').disabled=false}
+  };
+}
+
+/* 施工進度：有網址就是連結；還沒有就先請執行者輸入，存檔後固定 */
+const isUrl=u=>/^https?:\/\/\S+\.\S+/i.test(String(u||'').trim());
+function progBtn(p,cls=''){
+  return isUrl(p.progressUrl)
+    ?`<a class="${cls} prog" href="${esc(p.progressUrl)}" target="_blank" rel="noopener" title="開啟施工進度網頁">施工進度 ↗</a>`
+    :`<button type="button" class="${cls} prog unset" data-act="prog" data-id="${p.id}" title="還沒設定施工進度網頁">＋ 施工進度</button>`;
+}
+function progModal(p){
+  openModal(`<h3>設定施工進度網頁</h3><p class="lead">${esc(p.short||p.name)} 還沒有施工進度網頁。貼上網址後會存起來，之後按「施工進度」就會直接打開這個網頁。</p>
+  <form id="prf"><div class="fgrid"><label class="full">施工進度網址<input name="url" id="prurl" type="url" required placeholder="https://…" autocomplete="off"><small>例如進度表的 Google 試算表連結，或施工日誌網頁。之後要改，請到這件工程的「編輯」。</small></label></div>
+  <div class="mfoot"><span class="msg" id="prmsg"></span><button type="button" class="btn" data-close>取消</button><button class="btn primary" id="prok">儲存並開啟</button></div></form>`,'sm');
+  $('[data-close]').onclick=closeModal;
+  $('#prf').onsubmit=async e=>{
+    e.preventDefault();const u=$('#prurl').value.trim(),msg=$('#prmsg');
+    if(!isUrl(u)){msg.className='msg err';msg.textContent='網址要以 http:// 或 https:// 開頭';return}
+    const w=window.open('about:blank','_blank');
+    $('#prok').disabled=true;msg.className='msg';msg.textContent='儲存中…';
+    try{
+      await persist(arr=>arr.map(x=>x.id===p.id?{...x,progressUrl:u}:x),[],`設定施工進度網址：${p.short||p.name}`,t=>msg.textContent=t);
+      if(w)w.location.href=u;closeModal();route();
+    }catch(err){if(w)w.close();msg.className='msg err';msg.textContent='沒有存成功：'+err.message;$('#prok').disabled=false}
   };
 }
 
@@ -586,7 +611,7 @@ async function parseXlsx(file){
 document.addEventListener('click',e=>{
   const b=e.target.closest('[data-act]');if(!b)return;
   const a=b.dataset.act,p=PROJECTS.find(x=>x.id===b.dataset.id);
-  if(a==='add')needConn(()=>formModal());else if(a==='edit'&&p)needConn(()=>formModal(p));else if(a==='del'&&p)needConn(()=>deleteModal(p));else if(a==='settings')settingsModal();
+  if(a==='add')needConn(()=>formModal());else if(a==='edit'&&p)needConn(()=>formModal(p));else if(a==='del'&&p)needConn(()=>deleteModal(p));else if(a==='settings')settingsModal();else if(a==='prog'&&p)needConn(()=>progModal(p));
 });
 
 function route(){
