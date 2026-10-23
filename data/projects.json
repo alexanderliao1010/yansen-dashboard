@@ -707,5 +707,48 @@
     "json": "data/xz/budget.json"
    }
   }
+ },
+ {
+  "id": "pmvk907kp",
+  "name": "竹北市公所清潔隊工作場所改善工程",
+  "short": "",
+  "agency": "新竹縣竹北市公所",
+  "caseNo": "1153300631",
+  "awardDate": "2026-08-26",
+  "start": "2026-10-01",
+  "days": 150,
+  "dayType": "cal",
+  "startRule": "",
+  "amount": 9997831,
+  "budget": 10019267,
+  "floor": 10010000,
+  "subsidy": "否",
+  "supervisor": "尚強技術顧問有限公司",
+  "contact": "温于媗",
+  "phone": "(03) 5515919 # 372",
+  "email": "",
+  "announce": "2026-09-10",
+  "bidOpen": "2026-08-14",
+  "method": "公開招標／最低標",
+  "estPeriod": "115/08/27～115/12/31（預估）",
+  "copies": "",
+  "ratio": "99.88%",
+  "tel": "035515919",
+  "amountCN": "玖佰玖拾玖萬柒仟捌佰參拾壹元",
+  "docs": {
+   "contract": {
+    "text": "data/pmvk907kp/contract.txt"
+   },
+   "draw": {
+    "pdf": "data/pmvk907kp/drawings.pdf"
+   },
+   "award": {
+    "pdf": "data/pmvk907kp/award.pdf"
+   },
+   "budget": {
+    "json": "data/pmvk907kp/budget.json",
+    "file": "data/pmvk907kp/budget.xls"
+   }
+  }
  }
 ]
