@@ -707,7 +707,8 @@
    "budget": {
     "json": "data/xz/budget.json"
    }
-  }
+  },
+  "progressUrl": "https://claude.ai/artifact/7eW8H3gvnwxSLyVubTXA3p"
  },
  {
   "id": "pmvk907kp",
